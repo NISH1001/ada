@@ -12,3 +12,7 @@ wheels/
 # Environment files
 .env
 .envrc
+
+# Auto-generated tool implementations (built by codegen agent + Monty)
+_impl_gen.py
+
