@@ -45,7 +45,7 @@ class ToolSpec:
     name: str
     description: str
     parameters: list[ParamSpec] = field(default_factory=list)
-    capabilities: list[str] = field(default_factory=list)
+    affordances: list[str] = field(default_factory=list)
     body: str = ""  # markdown below frontmatter
     extra_docs: dict[str, str] = field(default_factory=dict)
     tool_dir: Path | None = None
@@ -78,27 +78,34 @@ def parse_tool_spec(tool_dir: Path) -> ToolSpec | None:
         name=raw["name"],
         description=raw.get("description", ""),
         parameters=params,
-        capabilities=raw.get("capabilities", []) or [],
+        affordances=raw.get("affordances", []) or [],
         body=parts[2].strip(),
         extra_docs=extra_docs,
         tool_dir=tool_dir,
     )
 
 
-# ── Capability registry ────────────────────────────────────────────
+# ── Affordance registry ────────────────────────────────────────────
 #
-# Tools declare capabilities they need (e.g. "http"). Each capability bundles:
+# An "affordance" is what the generated tool code is allowed to do at the
+# I/O boundary — make HTTP calls, read files, get the current time, etc.
+#
+# Each affordance bundles:
 #   - stubs:    type stubs Monty uses to type-check the generated code
 #   - mock_fn:  async fn injected during validation (returns mock data)
 #   - runtime_fn: async fn injected at runtime (real implementation)
 #
-# To add a new capability (e.g. file_read, time, etc.), add a single entry below.
-# Tool specs reference capabilities by name in their YAML frontmatter:
-#   capabilities: [http]
+# To add a new affordance (e.g. file_read, time, etc.), add a single entry below.
+# Tool specs reference affordances by name in their YAML frontmatter:
+#   affordances: [http]
+#
+# Note: this is unrelated to pydantic-ai's `capabilities` (which are agent-level
+# bundles like Thinking/WebSearch). Affordances live entirely inside the
+# build pipeline and never reach the main agent.
 
 
 @dataclass
-class Capability:
+class Affordance:
     """Bundles type stubs, mock impl, and runtime impl for one external function."""
 
     name: str  # the function name the generated code calls (e.g. "http_request")
@@ -145,8 +152,8 @@ async def _real_http_request(
         return resp.text
 
 
-CAPABILITIES: dict[str, Capability] = {
-    "http": Capability(
+AFFORDANCES: dict[str, Affordance] = {
+    "http": Affordance(
         name="http_request",
         stubs="""\
 from typing import Any
@@ -157,43 +164,43 @@ async def http_request(method: str, url: str, params: dict[str, Any], headers: d
         mock_fn=_mock_http_request,
         runtime_fn=_real_http_request,
     ),
-    # Add new capabilities here. Examples:
-    #   "time": Capability(name="now", stubs=..., mock_fn=..., runtime_fn=...),
-    #   "file_read": Capability(name="read_file", stubs=..., mock_fn=..., runtime_fn=...),
+    # Add new affordances here. Examples:
+    #   "time": Affordance(name="now", stubs=..., mock_fn=..., runtime_fn=...),
+    #   "file_read": Affordance(name="read_file", stubs=..., mock_fn=..., runtime_fn=...),
 }
 
 
-def _capability_stubs(capabilities: list[str]) -> str:
-    """Concatenate type stubs for the requested capabilities."""
+def _affordance_stubs(affordances: list[str]) -> str:
+    """Concatenate type stubs for the requested affordances."""
     parts = []
-    for cap_name in capabilities:
-        cap = CAPABILITIES.get(cap_name)
-        if cap is None:
-            logger.warning("[ToolBuild] unknown capability: {}", cap_name)
+    for aff_name in affordances:
+        aff = AFFORDANCES.get(aff_name)
+        if aff is None:
+            logger.warning("[ToolBuild] unknown affordance: {}", aff_name)
             continue
-        parts.append(cap.stubs)
+        parts.append(aff.stubs)
     return "\n".join(parts)
 
 
-def _capability_externals(capabilities: list[str]) -> dict[str, Any]:
+def _affordance_externals(affordances: list[str]) -> dict[str, Any]:
     """Build the external_functions dict for Monty validation."""
     externals = {}
-    for cap_name in capabilities:
-        cap = CAPABILITIES.get(cap_name)
-        if cap is None:
+    for aff_name in affordances:
+        aff = AFFORDANCES.get(aff_name)
+        if aff is None:
             continue
-        externals[cap.name] = cap.mock_fn
+        externals[aff.name] = aff.mock_fn
     return externals
 
 
-def _capability_runtime(capabilities: list[str]) -> dict[str, Any]:
+def _affordance_runtime(affordances: list[str]) -> dict[str, Any]:
     """Build the namespace injections for runtime exec()."""
     runtime = {}
-    for cap_name in capabilities:
-        cap = CAPABILITIES.get(cap_name)
-        if cap is None:
+    for aff_name in affordances:
+        aff = AFFORDANCES.get(aff_name)
+        if aff is None:
             continue
-        runtime[cap.name] = cap.runtime_fn
+        runtime[aff.name] = aff.runtime_fn
     return runtime
 
 
@@ -204,7 +211,7 @@ async def validate_with_monty(code: str, spec: ToolSpec) -> str | None:
     """Validate generated code in Monty sandbox. Returns None if valid, error str if not.
 
     Stubs and external functions are dynamically assembled from the spec's declared
-    capabilities. Pure-compute tools (no capabilities) validate as plain Python.
+    affordances. Pure-compute tools (no affordances) validate as plain Python.
     """
     # Build test inputs for required params
     test_args = {}
@@ -217,8 +224,8 @@ async def validate_with_monty(code: str, spec: ToolSpec) -> str | None:
     args_str = ", ".join(f"{k}={v!r}" for k, v in test_args.items())
     wrapper = f"{code}\n\nawait {spec.name}({args_str})\n"
 
-    stubs = _capability_stubs(spec.capabilities)
-    externals = _capability_externals(spec.capabilities)
+    stubs = _affordance_stubs(spec.affordances)
+    externals = _affordance_externals(spec.affordances)
 
     try:
         m = pydantic_monty.Monty(
@@ -252,7 +259,7 @@ Rules:
 - Format the output as a human-readable string, following the spec's "Output format" section.
 - Handle null/missing fields gracefully — fall back to "n/a".
 - You may `import json` for parsing. NO other imports allowed (no httpx, no os, no requests, etc).
-- For external I/O (HTTP, file reads, time, etc.), use ONLY the external functions listed in the prompt's "Available capabilities" section. DO NOT import or define them. If no capabilities are listed, write pure Python — no I/O at all.
+- For external I/O (HTTP, file reads, time, etc.), use ONLY the external functions listed in the prompt's "Available affordances" section. DO NOT import or define them. If no affordances are listed, write pure Python — no I/O at all.
 - Do NOT wrap code in markdown fences. Return raw Python code only.
 
 After generating code, call `validate_code(code)` to check it. If the result is not "valid", read the error, fix the code, and validate again. Keep iterating until valid, then return the final code.
@@ -291,18 +298,18 @@ def _spec_prompt(spec: ToolSpec) -> str:
         default = f", default={p.default!r}" if p.default is not None else ""
         lines.append(f"- {p.name}: {p.type}{req}{default} — {p.description}")
 
-    # Available capabilities — what external functions the generated code can use
+    # Available affordances — what external functions the generated code can use
     lines.append("")
-    lines.append("## Available capabilities")
-    if spec.capabilities:
-        for cap_name in spec.capabilities:
-            cap = CAPABILITIES.get(cap_name)
-            if cap is None:
-                lines.append(f"- (unknown capability: {cap_name})")
+    lines.append("## Available affordances")
+    if spec.affordances:
+        for aff_name in spec.affordances:
+            aff = AFFORDANCES.get(aff_name)
+            if aff is None:
+                lines.append(f"- (unknown affordance: {aff_name})")
                 continue
-            lines.append(f"### {cap_name}")
+            lines.append(f"### {aff_name}")
             lines.append("```python")
-            lines.append(cap.stubs.strip())
+            lines.append(aff.stubs.strip())
             lines.append("```")
     else:
         lines.append("(none — this is a pure compute tool. No external functions, no I/O.)")
@@ -374,9 +381,9 @@ TYPE_MAP = {"string": str, "integer": int, "number": float, "boolean": bool}
 
 
 def _make_callable(code: str, spec: ToolSpec):
-    """exec the generated code, inject capability runtime impls, synthesize signature for FastMCP."""
+    """exec the generated code, inject affordance runtime impls, synthesize signature for FastMCP."""
     namespace: dict = {"json": json}
-    namespace.update(_capability_runtime(spec.capabilities))
+    namespace.update(_affordance_runtime(spec.affordances))
     exec(code, namespace)
     fn = namespace[spec.name]
 

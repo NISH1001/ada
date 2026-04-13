@@ -1,7 +1,7 @@
 ---
 name: search_github
 description: Search public GitHub repositories
-capabilities: [http]
+affordances: [http]
 parameters:
   - name: query
     required: true

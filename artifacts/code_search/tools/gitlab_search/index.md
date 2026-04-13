@@ -1,7 +1,7 @@
 ---
 name: search_gitlab
 description: Search public GitLab repositories
-capabilities: [http]
+affordances: [http]
 parameters:
   - name: search
     required: true
