@@ -46,6 +46,9 @@ Synonyms at same level: {list of sibling terms}
 
 If no match found: return the original term with a note that it was not found in GCMD.
 
+## Matching algorithm
+Use case-insensitive **substring** matching, not exact match. For example, "sea surface salinity" should match "OCEAN SURFACE SALINITY" if the query words appear in the field values. Check all hierarchy levels (Category through Detailed_Variable) for matches. Return the most specific match (deepest level).
+
 ## Known issues
 - Hierarchy depth is inconsistent — Variable_Level_3 and Detailed_Variable often absent
 - May not include the newest missions (file refresh cadence TBD)

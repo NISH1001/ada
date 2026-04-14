@@ -58,7 +58,7 @@ async def create_agent(
         logger.warning("[Agent] no dynamic tools built — agent will have only load_artifact")
 
     agent = Agent(
-        "openai:gpt-5-nano",
+        "openai:gpt-5.2",
         deps_type=ArtifactStore,
         toolsets=toolsets,
     )
