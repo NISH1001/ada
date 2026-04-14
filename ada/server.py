@@ -14,8 +14,7 @@ async def build_tool_server(
     artifacts_root: Path, builder: ToolBuilder | None = None
 ) -> FastMCP | None:
     """Build a FastMCP server with tools generated from artifact specs."""
-    if builder is None:
-        builder = ToolBuilder()
+    builder = builder or ToolBuilder()
 
     tools = await builder.build_all(artifacts_root)
     if not tools:
